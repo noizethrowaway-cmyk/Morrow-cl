@@ -45,11 +45,13 @@ th{font-weight:600}
 nav{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);display:flex;justify-content:center;gap:4px;padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px))}
 nav button{flex:1;max-width:160px;background:transparent;color:var(--mute);padding:10px 6px;border-radius:12px}
 nav button[aria-current="page"]{background:var(--mint);color:var(--ink)}
+.top{max-width:640px;margin:0 auto;padding:14px 16px 0}.top button{background:transparent;color:var(--ink);font:500 1.35rem Fraunces,Georgia,serif;padding:4px 0}ol{padding-left:20px;margin:0}li{margin-bottom:8px}
 nav button{font-size:.78rem;padding:10px 2px}details{border-bottom:1px solid var(--line);padding:10px 0}summary{font-weight:600;cursor:pointer}input[type=checkbox]{width:auto;margin-top:5px}.chk label{display:flex;gap:10px;font-weight:400;align-items:flex-start}.tl{border-left:3px solid var(--sage);margin-left:6px;padding-left:14px}.tl>div{margin-bottom:14px}
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .4s ease}}
 </style>
 </head>
 <body>
+<header class="top"><button data-v="home" aria-label="Morrow home">Morrow 🌿</button></header>
 <main id="app" aria-live="polite"></main>
 <nav aria-label="Main">
 <button data-v="plan">My plan</button><button data-v="over">Overpay</button><button data-v="scen">Scenarios</button><button data-v="time">Timeline</button><button data-v="learn">Learn</button>
@@ -57,8 +59,8 @@ nav button{font-size:.78rem;padding:10px 2px}details{border-bottom:1px solid var
 <script>
 "use strict";
 const KEY="morrow.plan.v1";
-const FIELDS=["bal","rate","term","pay","value","target","over","lump","years","sav","sr","st","sy","vadj","lender","dealEnd"];
-let S={type:"repayment",target:"70",over:"50",lump:"0",years:"5"},view="setup";
+const FIELDS=["bal","rate","term","pay","value","target","over","lump","years","sav","sr","st","sy","vadj","lender","dealEnd","newRate"];
+let S={type:"repayment",target:"70",over:"50",lump:"0",years:"5"},view="home";
 try{const r=localStorage.getItem(KEY);if(r){S=Object.assign(S,JSON.parse(r));view="plan"}}catch(e){}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
 const num=k=>{const v=parseFloat(S[k]);return isFinite(v)?v:NaN};
@@ -77,11 +79,11 @@ function inputs(){
   return {P,r,n,io,V,base,entered:entered>0,rate,yrs};
 }
 /* Month-by-month: interest on opening balance, payment at month end. Lump sum applied at the start. */
-function sim(c,over,lump,maxM){
-  let b=Math.max(0,c.P-lump),interest=0,m=0;const bals=[b];
+function sim(c,over,lump,maxM,sw){
+  let b=Math.max(0,c.P-lump),interest=0,m=0,rr=c.r;const bals=[b];
   const cap=maxM||(c.io?c.n:600);
   while(b>0.005&&m<cap){
-    const i=b*c.r;interest+=i;
+    if(sw&&b<=sw.tb+.005)rr=sw.r2;const i=b*rr;interest+=i;
     const pay=c.io?i+over:c.base+over;
     b=Math.max(0,b+i-Math.min(pay,b+i));m++;bals.push(b);
   }
@@ -107,7 +109,7 @@ function show(v){
   view=v;scrollTo(0,0);
   document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.v===v?"page":"false"));
   if(v==="setup")app.innerHTML=`
-  <h1>Where are you today?</h1><p class="mute">Takes a minute. Everything stays in this browser; nothing is sent anywhere.</p>
+  <h1>Let’s start with your mortgage</h1><p class="mute">Grab your latest statement or lender app. Not sure of something? Leave it blank or use your best guess. Everything stays on this device.</p>
   <div class="card">
   ${field("bal","Outstanding mortgage balance (£)","On your latest statement or lender app.")}
   ${field("rate","Current interest rate (% a year)","")}
@@ -115,10 +117,11 @@ function show(v){
   ${field("pay","Current monthly payment (£) – optional","Leave blank and we’ll estimate it. Estimated values are labelled as such.")}
   <label for="type">Mortgage type</label><select id="type" data-k="type"><option value="repayment">Repayment</option><option value="io">Interest-only</option></select>
   <div class="hint">Part-and-part mortgages aren’t supported yet.</div></div>
-  <div class="card"><h2>What would you like to achieve?</h2>
+  <div class="card"><h2>Now, where would you like to get to?</h2>
   ${field("value","Estimated property value (£)","Your own estimate. Lenders value properties differently.")}
   <label>Target LTV</label><div class="chips" id="chips">${[80,75,70,65,60,59.5,59,58].map(t=>`<button type="button" data-t="${t}">${t}%</button>`).join("")}</div>
   ${field("target","Or a custom target (%)","If you’re aiming for 60%, a little margin below it can help if a valuation comes in lower. Lender bands and pricing vary.")}
+  ${field("newRate","Rate you think you could get at that LTV (%), optional","This is the fun bit: it lets us show what a lower rate could be worth. Not sure? Check lenders’ rate tables for your LTV band or ask a broker. We don’t know today’s rates, so it’s your what-if.")}
   </div>
   <div id="err"></div>
   <button class="pri" id="go">Show my plan</button> <button class="sec" id="ex">Try an example</button>`;
@@ -129,7 +132,7 @@ function show(v){
   ${field("lump","One-off lump sum today (£)","Applied at the start of the projection.")}
   ${field("years","Reach target within (years)","Used to estimate the monthly overpayment needed.")}</div>
   <div class="card"><h2>Savings or overpayment?</h2>${field("sav","Money available (£)","")}${field("sr","Savings rate (% a year, gross)","Variable rates can change, and so can your mortgage rate after a fixed deal.")}${field("st","Tax on savings interest (%)","Use 0 if you don’t expect to pay tax on it. Allowances differ between people.")}${field("sy","Time horizon (years)","")}</div><div id="out"></div>`;
-  if(v==="data")dataView();if(v==="scen")scenView();if(v==="learn")learnView();if(v==="time")app.innerHTML=timeShell();
+  if(v==="data")dataView();if(v==="home")homeView();if(v==="scen")scenView();if(v==="learn")learnView();if(v==="time")app.innerHTML=timeShell();
   if(v==="setup"){document.getElementById("type").value=S.type}
   update();
 }
@@ -155,7 +158,7 @@ function targetInfo(c){
 }
 function planHTML(c){
   const ltv=c.P/c.V*100,ti=targetInfo(c),over=Math.max(0,num("over")||0),lump=Math.max(0,num("lump")||0);
-  let h=`<h1>Your mortgage plan</h1><div class="hero"><div class="mute">Estimated current LTV</div><div class="big">${pct(ltv)}</div>
+  let h=`<h1>Here’s where you stand</h1><div class="hero"><div class="mute">Estimated current LTV</div><div class="big">${pct(ltv)}</div>
   <div class="mute">${gbp(c.P)} balance on ${gbp(c.V)} estimated value</div></div>`;
   if(!ti)return h+`<div class="warn">Choose a target LTV between 1% and 100% in Set up.</div>`;
   const prog=ltv<=ti.t?100:Math.max(0,Math.min(100,(1-(ltv-ti.t)/(ltv))*100));
@@ -170,7 +173,7 @@ function planHTML(c){
     <p>${need===null?"":need===0?`Your normal payments alone should get there within ${num("years")||5} years.`:`To get there within ${num("years")||5} years you’d need roughly <b>${gbp(need)}</b> a month extra (estimate).`}</p>
     <div class="hint">Edit overpayments and timeframe in Overpay. Property value held constant.</div></div>`;
   }
-  h+=`<div class="card"><h2>Your numbers</h2><div class="row"><div class="stat"><div class="mute">Monthly payment ${c.entered?"":"(estimated)"}</div><div class="big">${gbp(c.base)}</div></div>
+  h+=saveHTML(c,ti)+`<div class="card"><h2>Your numbers</h2><div class="row"><div class="stat"><div class="mute">Monthly payment ${c.entered?"":"(estimated)"}</div><div class="big">${gbp(c.base)}</div></div>
   <div class="stat"><div class="mute">Term remaining</div><div class="big">${c.yrs}y</div></div></div>
   ${c.io?`<div class="warn">Interest-only: your balance doesn’t fall unless you overpay. Check how you plan to repay it at the end of the term.</div>`:""}</div>`;
   return h+ltvHTML(c)+`<p><button class="pri" data-v="setup">Edit my details</button> <button class="sec" data-v="data">My data</button></p><div class="warn">Estimates only, not advice. Lender LTV bands and pricing vary, and a lower LTV doesn’t guarantee approval or a particular rate.</div>`;
@@ -270,6 +273,20 @@ document.addEventListener("click",e=>{const t=e.target,d=t.dataset||{};S.scen=S.
   if(d.rm){S.scen=S.scen.filter(x=>x.id!==d.rm);save();scenView()}
   if(d.ics)ics();
 });
+const EX={bal:"134396",rate:"4.5",term:"22",pay:"",type:"repayment",value:"200000",target:"60",over:"100",lump:"0",years:"5",newRate:"3.9"};
+function saveHTML(c,ti){
+  const nr=parseFloat(S.newRate),over=Math.max(0,num("over")||0),lump=Math.max(0,num("lump")||0),T="<h2>What could a lower LTV be worth?</h2>";
+  if(!(nr>=0))return `<div class="card">${T}<p>Add a rate you think you could get at ${pct(ti.t)} LTV and we’ll show the possible saving.</p><button class="pri" data-v="setup">Add a rate</button></div>`;
+  if(nr>=c.rate)return `<div class="card">${T}<p>The rate you entered (${nr}%) isn’t lower than your current ${c.rate}%, so there’s no saving to show. You can change it in Set up.</p></div>`;
+  const A=sim(c,over,lump),B=sim(c,over,lump,null,{tb:ti.tb,r2:nr/1200}),sv=Math.max(0,A.interest-B.interest),mo=Math.min(c.P,ti.tb)*(c.rate-nr)/1200;
+  return `<div class="card">${T}<p class="mute">If you reach ${pct(ti.t)} LTV and then get ${nr}% instead of ${c.rate}%…</p><div class="row"><div class="stat"><div class="mute">Less interest overall</div><div class="big">${gbp(sv)}</div></div><div class="stat"><div class="mute">Less interest a month</div><div class="big">${gbp(mo)}</div></div></div><p class="mute" style="margin-top:10px">…and you keep paying the same amount, so you’d finish sooner too. Rough estimate only: it ignores fees and early repayment charges, assumes that rate is available to you, and rates can change. A broker can tell you what’s really on offer.</p></div>`;
+}
+function homeView(){const has=!!inputs();app.innerHTML=`<div class="hero"><h1>Could a lower LTV save you money?</h1><p>Let’s find out. Pop in a few numbers about your mortgage and we’ll show you how your financial future could look if you unlocked a lower LTV.</p>
+<p><button class="pri" data-v="${has?"plan":"setup"}">${has?"Back to my plan":"Let’s do it"}</button> <button class="sec" data-ex="1">See an example first</button></p><div class="hint">Takes about a minute. Your numbers never leave your device.</div></div>
+<div class="card"><h2>First up, what’s LTV?</h2><p>Loan-to-value is your mortgage balance as a percentage of what your home’s worth. Owe £120,000 on a £200,000 home? That’s 60%. Lenders often price their deals by LTV band, so a lower number can sometimes mean a cheaper rate.</p></div>
+<div class="card"><h2>How it works</h2><ol><li><b>Tell us about your mortgage.</b> Balance, rate, term and roughly what your home’s worth.</li><li><b>Pick an LTV to aim for.</b> Say 75%, 70% or 60%.</li><li><b>See your future.</b> How long it could take, what you’d need to pay, and what a lower rate could be worth.</li></ol></div>
+<div class="warn">Quick heads up: Morrow gives estimates, not advice. A lower LTV doesn’t guarantee a better rate, and overpaying isn’t right for everyone, so check your overpayment allowance and any early repayment charges first.</div>`}
+document.addEventListener("click",e=>{if(e.target.dataset&&e.target.dataset.ex){Object.assign(S,EX);save();show("plan")}});
 /* ---- events ---- */
 document.addEventListener("input",e=>{
   const k=e.target.dataset&&e.target.dataset.k;if(!k)return;
@@ -288,9 +305,9 @@ document.addEventListener("click",e=>{
     if(!c||!ti)document.getElementById("err").innerHTML=`<div class="warn">Please enter a balance above £0, a rate (0% or more), a term and a property value, plus a target between 1% and 100%.</div>`;
     else{save();show("plan")}
   }
-  if(t.id==="ex"){Object.assign(S,{bal:"134396",rate:"4.5",term:"22",pay:"",type:"repayment",value:"200000",target:"60",over:"100",lump:"0",years:"5"});save();show("setup");document.querySelectorAll("#chips button").forEach(b=>b.classList.toggle("on",b.dataset.t===S.target))}
+  if(t.id==="ex"){Object.assign(S,EX);save();show("setup");document.querySelectorAll("#chips button").forEach(b=>b.classList.toggle("on",b.dataset.t===S.target))}
   if(t.id==="imp"){try{const o=JSON.parse(document.getElementById("blob").value);if(typeof o!=="object"||!o)throw 0;const n={};["type",...FIELDS].forEach(k=>{if(k in o)n[k]=String(o[k]).slice(0,20)});Object.assign(S,n);if(Array.isArray(o.scen))S.scen=o.scen.slice(0,12).map(x=>({id:String(x.id).slice(0,12),name:String(x.name).slice(0,30),over:+x.over||0,lump:+x.lump||0,vchg:+x.vchg||0}));if(o.check&&typeof o.check==="object")S.check=Object.fromEntries(Object.entries(o.check).slice(0,20).map(([k,v])=>[k.slice(0,3),!!v]));save();document.getElementById("msg").textContent="Imported."}catch(x){document.getElementById("msg").textContent="That doesn’t look like a Morrow plan. Paste the exported text exactly."}}
-  if(t.id==="del"&&confirm("Delete your saved plan from this browser?")){try{localStorage.removeItem(KEY)}catch(x){}S={type:"repayment",target:"70",over:"50",lump:"0",years:"5"};show("setup")}
+  if(t.id==="del"&&confirm("Delete your saved plan from this browser?")){try{localStorage.removeItem(KEY)}catch(x){}S={type:"repayment",target:"70",over:"50",lump:"0",years:"5"};show("home")}
 });
 show(view);
 document.querySelectorAll("#chips button").forEach(b=>b.classList.toggle("on",b.dataset.t===S.target));
